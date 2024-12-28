@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Paths and Cycleways Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #container { display: flex; height: 100vh; }
+        #map { flex: 2; height: 100%; position: relative; }
+        #dashboard {
+            flex: 1;
+            padding: 20px;
+            background: #f5f5f5;
+            overflow-y: auto;
+        }
+        .dashboard-card {
+            background: white;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .loading {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 4px;
+            display: none;
+            z-index: 1000;
+        }
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .fetch-button {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .fetch-button:hover {
+            background: #45a049;
+        }
+        .fetch-button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+        .warning {
+            color: #ff4444;
+            font-size: 0.9em;
+            margin-top: 5px;
+            display: none;
+        }
+        .path-legend {
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .path-legend span {
+            display: inline-block;
+            width: 20px;
+            height: 3px;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">Loading path data...</div>
+    <div id="container">
+        <div id="map">
+            <div class="control-panel">
+                <button id="fetchData" class="fetch-button">Fetch Path Data</button>
+                <div id="zoomWarning" class="warning">Please zoom in closer to fetch data</div>
+                <div class="path-legend">
+                    <div><span style="background: #ff0000"></span>Footway</div>
+                    <div><span style="background: #0000ff"></span>Cycleway</div>
+                    <div><span style="background: #8e24aa"></span>Shared Path</div>
+                </div>
+            </div>
+        </div>
+        <div id="dashboard">
+            <div class="dashboard-card">
+                <h3>Path Statistics</h3>
+                <div id="path-stats">
+                    <p>Total Paths: <span id="total-count">0</span></p>
+                    <p>Total Length: <span id="total-length">0</span> km</p>
+                    <p>Footways: <span id="footway-count">0</span> (<span id="footway-length">0</span> km)</p>
+                    <p>Cycleways: <span id="cycleway-count">0</span> (<span id="cycleway-length">0</span> km)</p>
+                    <p>Shared Paths: <span id="shared-count">0</span> (<span id="shared-length">0</span> km)</p>
+                </div>
+            </div>
+            <div class="dashboard-card">
+                <h3>Path Types Distribution</h3>
+                <canvas id="pathTypeChart"></canvas>
+            </div>
+            <div class="dashboard-card">
+                <h3>Crossing Statistics</h3>
+                <p>Total Crossings: <span id="crossing-count">0</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const map = L.map('map').setView([41.8719, 12.5674], 6); // Zoom on Italy
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let pathLayers = [];
+        let pathTypeChart = null;
+        const MIN_ZOOM_LEVEL = 14;
+        const fetchButton = document.getElementById('fetchData');
+        const zoomWarning = document.getElementById('zoomWarning');
+
+        const pathStyles = {
+            footway: { color: '#ff0000', weight: 3 },
+            cycleway: { color: '#0000ff', weight: 3 },
+            shared: { color: '#8e24aa', weight: 3 }
+        };
+
+        function initializeChart() {
+            const ctx = document.getElementById('pathTypeChart').getContext('2d');
+            pathTypeChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Footways', 'Cycleways', 'Shared Paths'],
+                    datasets: [{
+                        label: 'Length (km)',
+                        data: [0, 0, 0],
+                        backgroundColor: ['rgba(255, 0, 0, 0.5)', 'rgba(0, 0, 255, 0.5)', 'rgba(142, 36, 170, 0.5)'],
+                        borderColor: ['rgba(255, 0, 0, 1)', 'rgba(0, 0, 255, 1)', 'rgba(142, 36, 170, 1)'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { stepSize: 1 }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Path Types'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function fetchPathData() {
+            const bounds = map.getBounds();
+            const query = `
+                [out:json][timeout:25];
+                (
+                    way["highway"="footway"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"="cycleway"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"="path"]["foot"="designated"]["bicycle"="designated"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"]["crossing"~"footway|cycleway|path"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                );
+                out body;
+                >;
+                out skel qt;
+            `;
+
+            document.getElementById('loading').style.display = 'block';
+            fetchButton.disabled = true;
+
+            try {
+                const response = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    body: query
+                });
+                const data = await response.json();
+                return processOSMData(data);
+            } catch (error) {
+                console.error('Error fetching path data:', error);
+                return { paths: [], crossings: 0 };
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                fetchButton.disabled = false;
+            }
+        }
+
+        function processOSMData(data) {
+            const paths = [];
+            const nodes = {};
+            let crossingCount = 0;
+
+            data.elements.forEach(element => {
+                if (element.type === 'node') {
+                    nodes[element.id] = [element.lat, element.lon];
+                }
+            });
+
+            data.elements.forEach(element => {
+                if (element.type === 'way' && element.tags) {
+                    const coordinates = element.nodes.map(nodeId => nodes[nodeId]).filter(coord => coord);
+                    if (coordinates.length < 2) return;
+
+                    let pathType;
+                    if (element.tags.highway === 'footway') {
+                        pathType = 'footway';
+                    } else if (element.tags.highway === 'cycleway') {
+                        pathType = 'cycleway';
+                    } else if (element.tags.highway === 'path' && element.tags.foot === 'designated' && element.tags.bicycle === 'designated') {
+                        pathType = 'shared';
+                    } else if (element.tags.crossing) {
+                        crossingCount++;
+                        return;
+                    }
+
+                    if (pathType) {
+                        paths.push({
+                            id: element.id,
+                            type: pathType,
+                            coordinates: coordinates,
+                            name: element.tags.name || '',
+                            surface: element.tags.surface || 'unknown',
+                            length: calculatePathLength(coordinates)
+                        });
+                    }
+                }
+            });
+
+            return { paths, crossings: crossingCount };
+        }
+
+        function calculatePathLength(coordinates) {
+            let length = 0;
+            for (let i = 1; i < coordinates.length; i++) {
+                length += map.distance(coordinates[i - 1], coordinates[i]);
+            }
+            return length / 1000;
+        }
+
+        function updatePaths({ paths, crossings }) {
+            pathLayers.forEach(layer => map.removeLayer(layer));
+            pathLayers = [];
+
+            paths.forEach(path => {
+                const layer = L.polyline(path.coordinates, pathStyles[path.type])
+                    .bindPopup(`
+                        ${path.name ? `<b>${path.name}</b><br>` : ''}
+                        Type: ${path.type}<br>
+                        Length: ${path.length.toFixed(2)} km<br>
+                        Surface: ${path.surface}
+                    `)
+                    .addTo(map);
+                pathLayers.push(layer);
+            });
+
+            document.getElementById('crossing-count').textContent = crossings;
+        }
+
+        function updateDashboard({ paths }) {
+            const stats = {
+                footway: { count: 0, length: 0 },
+                cycleway: { count: 0, length: 0 },
+                shared: { count: 0, length: 0 }
+            };
+
+            paths.forEach(path => {
+                stats[path.type].count++;
+                stats[path.type].length += path.length;
+            });
+
+            const totalCount = paths.length;
+            const totalLength = paths.reduce((sum, path) => sum + path.length, 0);
+
+            document.getElementById('total-count').textContent = totalCount;
+            document.getElementById('total-length').textContent = totalLength.toFixed(2);
+
+            document.getElementById('footway-count').textContent = stats.footway.count;
+            document.getElementById('footway-length').textContent = stats.footway.length.toFixed(2);
+            document.getElementById('cycleway-count').textContent = stats.cycleway.count;
+            document.getElementById('cycleway-length').textContent = stats.cycleway.length.toFixed(2);
+            document.getElementById('shared-count').textContent = stats.shared.count;
+            document.getElementById('shared-length').textContent = stats.shared.length.toFixed(2);
+
+            pathTypeChart.data.datasets[0].data = [
+                stats.footway.length,
+                stats.cycleway.length,
+                stats.shared.length
+            ];
+            pathTypeChart.update();
+        }
+
+        function checkZoomLevel() {
+            const currentZoom = map.getZoom();
+            const isZoomValid = currentZoom >= MIN_ZOOM_LEVEL;
+
+            fetchButton.disabled = !isZoomValid;
+            zoomWarning.style.display = isZoomValid ? 'none' : 'block';
+        }
+
+        function initialize() {
+            initializeChart();
+
+            fetchButton.addEventListener('click', async () => {
+                const data = await fetchPathData();
+                updatePaths(data);
+                updateDashboard(data);
+            });
+
+            map.on('zoomend', checkZoomLevel);
+            checkZoomLevel();
+        }
+
+        initialize();
+    </script>
+</body>
+</html>
