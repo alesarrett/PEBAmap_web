@@ -68,10 +68,18 @@
             margin-top: 10px;
             font-size: 0.9em;
         }
-        .path-legend span {
+        .path-legend span.line {
             display: inline-block;
             width: 20px;
             height: 3px;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        .path-legend span.dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
             margin-right: 5px;
             vertical-align: middle;
         }
@@ -85,9 +93,10 @@
                 <button id="fetchData" class="fetch-button">Fetch Path Data</button>
                 <div id="zoomWarning" class="warning">Please zoom in closer to fetch data</div>
                 <div class="path-legend">
-                    <div><span style="background: #ff0000"></span>Footway</div>
-                    <div><span style="background: #0000ff"></span>Cycleway</div>
-                    <div><span style="background: #8e24aa"></span>Shared Path</div>
+                    <div><span class="line" style="background: #ff0000"></span>Footway</div>
+                    <div><span class="line" style="background: #0000ff"></span>Cycleway</div>
+                    <div><span class="line" style="background: #8e24aa"></span>Shared Path</div>
+                    <div><span class="dot" style="background: #ff8c00"></span>Crossing</div>
                 </div>
             </div>
         </div>
@@ -120,6 +129,7 @@
         }).addTo(map);
 
         let pathLayers = [];
+        let crossingLayers = [];
         let pathTypeChart = null;
         const MIN_ZOOM_LEVEL = 14;
         const fetchButton = document.getElementById('fetchData');
@@ -167,10 +177,10 @@
             const query = `
                 [out:json][timeout:25];
                 (
-                    way["highway"="footway"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"="footway"]["footway"!="crossing"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                     way["highway"="cycleway"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                     way["highway"="path"]["foot"="designated"]["bicycle"="designated"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
-                    way["highway"]["crossing"~"footway|cycleway|path"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"="footway"]["footway"="crossing"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                 );
                 out body;
                 >;
@@ -196,10 +206,22 @@
             }
         }
 
+        function calculateCentroid(coordinates) {
+            if (coordinates.length === 2) {
+                return [
+                    (coordinates[0][0] + coordinates[1][0]) / 2,
+                    (coordinates[0][1] + coordinates[1][1]) / 2
+                ];
+            }
+            // Per segmenti più complessi, troviamo il punto centrale
+            const midIndex = Math.floor(coordinates.length / 2);
+            return coordinates[midIndex];
+        }
+
         function processOSMData(data) {
             const paths = [];
+            const crossings = [];
             const nodes = {};
-            let crossingCount = 0;
 
             data.elements.forEach(element => {
                 if (element.type === 'node') {
@@ -212,32 +234,40 @@
                     const coordinates = element.nodes.map(nodeId => nodes[nodeId]).filter(coord => coord);
                     if (coordinates.length < 2) return;
 
-                    let pathType;
-                    if (element.tags.highway === 'footway') {
-                        pathType = 'footway';
-                    } else if (element.tags.highway === 'cycleway') {
-                        pathType = 'cycleway';
-                    } else if (element.tags.highway === 'path' && element.tags.foot === 'designated' && element.tags.bicycle === 'designated') {
-                        pathType = 'shared';
-                    } else if (element.tags.crossing) {
-                        crossingCount++;
-                        return;
-                    }
-
-                    if (pathType) {
-                        paths.push({
+                    if (element.tags.highway === 'footway' && element.tags.footway === 'crossing') {
+                        crossings.push({
                             id: element.id,
-                            type: pathType,
-                            coordinates: coordinates,
+                            coordinates: calculateCentroid(coordinates),
                             name: element.tags.name || '',
-                            surface: element.tags.surface || 'unknown',
                             length: calculatePathLength(coordinates)
                         });
+                    } else {
+                        let pathType;
+                        if (element.tags.highway === 'footway') {
+                            pathType = 'footway';
+                        } else if (element.tags.highway === 'cycleway') {
+                            pathType = 'cycleway';
+                        } else if (element.tags.highway === 'path' &&
+                                element.tags.foot === 'designated' &&
+                                element.tags.bicycle === 'designated') {
+                            pathType = 'shared';
+                        }
+
+                        if (pathType) {
+                            paths.push({
+                                id: element.id,
+                                type: pathType,
+                                coordinates: coordinates,
+                                name: element.tags.name || '',
+                                surface: element.tags.surface || 'unknown',
+                                length: calculatePathLength(coordinates)
+                            });
+                        }
                     }
                 }
             });
 
-            return { paths, crossings: crossingCount };
+            return { paths, crossings };
         }
 
         function calculatePathLength(coordinates) {
@@ -249,9 +279,13 @@
         }
 
         function updatePaths({ paths, crossings }) {
+            // Rimuovi i layer esistenti
             pathLayers.forEach(layer => map.removeLayer(layer));
+            crossingLayers.forEach(layer => map.removeLayer(layer));
             pathLayers = [];
+            crossingLayers = [];
 
+            // Aggiungi i percorsi
             paths.forEach(path => {
                 const layer = L.polyline(path.coordinates, pathStyles[path.type])
                     .bindPopup(`
@@ -264,10 +298,25 @@
                 pathLayers.push(layer);
             });
 
-            document.getElementById('crossing-count').textContent = crossings;
+            // Aggiungi gli attraversamenti come punti
+            crossings.forEach(crossing => {
+                const layer = L.circleMarker(crossing.coordinates, {
+                    radius: 6,
+                    fillColor: '#ff8c00',
+                    color: '#000',
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                }).bindPopup(`
+                    Crossing<br>
+                    ${crossing.name ? `Name: ${crossing.name}<br>` : ''}
+                    Length: ${crossing.length.toFixed(2)} m
+                `).addTo(map);
+                crossingLayers.push(layer);
+            });
         }
 
-        function updateDashboard({ paths }) {
+        function updateDashboard({ paths, crossings }) {
             const stats = {
                 footway: { count: 0, length: 0 },
                 cycleway: { count: 0, length: 0 },
@@ -284,6 +333,7 @@
 
             document.getElementById('total-count').textContent = totalCount;
             document.getElementById('total-length').textContent = totalLength.toFixed(2);
+            document.getElementById('crossing-count').textContent = crossings.length;
 
             document.getElementById('footway-count').textContent = stats.footway.count;
             document.getElementById('footway-length').textContent = stats.footway.length.toFixed(2);
