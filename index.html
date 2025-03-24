@@ -2,18 +2,32 @@
 <html>
 <head>
     <title>Paths and Cycleways Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; }
-        #container { display: flex; height: 100vh; }
-        #map { flex: 2; height: 100%; position: relative; }
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: Arial, sans-serif;
+        }
+        #container { 
+            display: flex; 
+            flex-direction: row;
+            height: 100vh; 
+        }
+        #map { 
+            flex: 2; 
+            height: 100%; 
+            position: relative; 
+        }
         #dashboard {
             flex: 1;
             padding: 20px;
             background: #f5f5f5;
             overflow-y: auto;
+            min-width: 300px;
         }
         .dashboard-card {
             background: white;
@@ -22,15 +36,29 @@
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .loading {
+        .loading-container {
             position: fixed;
             top: 10px;
             right: 10px;
-            padding: 10px;
+            padding: 10px 15px;
             background: white;
             border-radius: 4px;
             display: none;
             z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .progress-bar {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+        .progress {
+            height: 10px;
+            background-color: #4CAF50;
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s;
         }
         .control-panel {
             position: absolute;
@@ -41,8 +69,9 @@
             padding: 10px;
             border-radius: 4px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            max-width: 200px;
         }
-        .fetch-button {
+        .fetch-button, .export-button {
             padding: 8px 16px;
             background: #4CAF50;
             color: white;
@@ -50,11 +79,13 @@
             border-radius: 4px;
             cursor: pointer;
             transition: background 0.3s;
+            width: 100%;
+            margin-bottom: 5px;
         }
-        .fetch-button:hover {
+        .fetch-button:hover, .export-button:hover {
             background: #45a049;
         }
-        .fetch-button:disabled {
+        .fetch-button:disabled, .export-button:disabled {
             background: #cccccc;
             cursor: not-allowed;
         }
@@ -83,41 +114,160 @@
             margin-right: 5px;
             vertical-align: middle;
         }
+        .dropdown {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            min-width: 160px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            z-index: 1;
+            border-radius: 4px;
+        }
+        .dropdown-content a {
+            color: black;
+            padding: 12px 16px;
+            text-decoration: none;
+            display: block;
+        }
+        .dropdown-content a:hover {
+            background-color: #f1f1f1;
+        }
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+        .export-dropdown {
+            width: 100%;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .stat-grid div {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .stat-grid h4 {
+            margin: 0 0 5px 0;
+            font-size: 1em;
+        }
+        .stat-grid p {
+            margin: 0;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        .stat-grid .length {
+            font-size: 0.85em;
+            color: #666;
+            font-weight: normal;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            #container {
+                flex-direction: column;
+            }
+            #map {
+                flex: 1;
+                height: 60vh;
+            }
+            #dashboard {
+                flex: none;
+                height: 40vh;
+                min-width: auto;
+            }
+            .control-panel {
+                left: 10px;
+                max-width: 150px;
+            }
+            .dropdown-content {
+                left: 0;
+                width: 100%;
+            }
+            .stat-grid {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
-    <div id="loading" class="loading">Loading path data...</div>
+    <div id="loading" class="loading-container">
+        <div>Loading path data...</div>
+        <div class="progress-bar">
+            <div id="progress" class="progress"></div>
+        </div>
+        <div id="loading-status">Initializing...</div>
+    </div>
     <div id="container">
         <div id="map">
             <div class="control-panel">
                 <button id="fetchData" class="fetch-button">Fetch Path Data</button>
+                <div class="dropdown">
+                    <button id="exportData" class="export-button" disabled>Export Data</button>
+                    <div class="dropdown-content">
+                        <a href="#" id="exportCSV">CSV Format</a>
+                        <a href="#" id="exportGeoJSON">GeoJSON Format</a>
+                    </div>
+                </div>
                 <div id="zoomWarning" class="warning">Please zoom in closer to fetch data</div>
                 <div class="path-legend">
+                    <div><span class="line" style="background: #ff6347"></span>Sidewalk</div>
                     <div><span class="line" style="background: #ff0000"></span>Footway</div>
                     <div><span class="line" style="background: #0000ff"></span>Cycleway</div>
                     <div><span class="line" style="background: #8e24aa"></span>Shared Path</div>
-                    <div><span class="dot" style="background: #ff8c00"></span>Crossing</div>
+                    <div id="crossing-legend-container">
+                        <!-- Crossing legend items will be added dynamically -->
+                    </div>
                 </div>
             </div>
         </div>
         <div id="dashboard">
             <div class="dashboard-card">
-                <h3>Path Statistics</h3>
-                <div id="path-stats">
-                    <p>Total Paths: <span id="total-count">0</span></p>
-                    <p>Total Length: <span id="total-length">0</span> km</p>
-                    <p>Footways: <span id="footway-count">0</span> (<span id="footway-length">0</span> km)</p>
-                    <p>Cycleways: <span id="cycleway-count">0</span> (<span id="cycleway-length">0</span> km)</p>
-                    <p>Shared Paths: <span id="shared-count">0</span> (<span id="shared-length">0</span> km)</p>
+                <h3>Path Statistics & Distribution</h3>
+                <div class="stat-grid">
+                    <div>
+                        <h4>Total Paths</h4>
+                        <p id="total-count">0</p>
+                        <p class="length"><span id="total-length">0</span> km</p>
+                    </div>
+                    <div>
+                        <h4>Crossings</h4>
+                        <p id="crossing-count">0</p>
+                    </div>
+                    <div>
+                        <h4>Footways</h4>
+                        <p id="footway-count">0</p>
+                        <p class="length"><span id="footway-length">0</span> km</p>
+                        <p class="length">(<span id="sidewalk-count" style="color: #ff6347">0</span> sidewalks)</p>
+                    </div>
+                    <div>
+                        <h4>Cycleways</h4>
+                        <p id="cycleway-count">0</p>
+                        <p class="length"><span id="cycleway-length">0</span> km</p>
+                    </div>
+                    <div>
+                        <h4>Shared Paths</h4>
+                        <p id="shared-count">0</p>
+                        <p class="length"><span id="shared-length">0</span> km</p>
+                    </div>
                 </div>
-            </div>
-            <div class="dashboard-card">
-                <h3>Path Types Distribution</h3>
                 <canvas id="pathTypeChart"></canvas>
             </div>
             <div class="dashboard-card">
-                <h3>Crossing Statistics</h3>
-                <p>Total Crossings: <span id="crossing-count">0</span></p>
+                <h3>Crossing Analysis</h3>
+                <div id="crossing-stats">
+                    <p>Total Crossings: <span id="crossing-total">0</span></p>
+                    <!-- Dynamic crossing stats will be inserted here -->
+                </div>
+                <canvas id="crossingTypeChart"></canvas>
             </div>
         </div>
     </div>
@@ -131,40 +281,222 @@
         let pathLayers = [];
         let crossingLayers = [];
         let pathTypeChart = null;
+        let crossingTypeChart = null;
+        let currentData = { paths: [], crossings: [] };
         const MIN_ZOOM_LEVEL = 14;
         const fetchButton = document.getElementById('fetchData');
+        const exportButton = document.getElementById('exportData');
+        const exportCSV = document.getElementById('exportCSV');
+        const exportGeoJSON = document.getElementById('exportGeoJSON');
         const zoomWarning = document.getElementById('zoomWarning');
+        const loadingContainer = document.getElementById('loading');
+        const progressBar = document.getElementById('progress');
+        const loadingStatus = document.getElementById('loading-status');
+        const crossingLegendContainer = document.getElementById('crossing-legend-container');
+
+        // Define constant colors for crossing types
+        const CROSSING_COLORS = {
+            'footway (marked)': 'rgba(255, 99, 132, 0.7)',    // Red
+            'footway (unmarked)': 'rgba(54, 162, 235, 0.7)',  // Blue
+            'footway (zebra)': 'rgba(255, 206, 86, 0.7)',     // Yellow
+            'footway (uncontrolled)': 'rgba(0, 204, 102, 0.7)',  // Teal
+            'footway (traffic_signals)': 'rgba(255, 105, 180, 0.7)',  // Hot Pink
+            'cycleway (marked)': 'rgba(75, 192, 192, 0.7)',   // Green
+            'cycleway (unmarked)': 'rgba(153, 102, 255, 0.7)', // Purple
+            'path (marked)': 'rgba(255, 159, 64, 0.7)',       // Orange
+            'path (unmarked)': 'rgba(63, 127, 191, 0.7)',     // Blue-ish
+            'default': 'rgba(128, 128, 128, 0.7)'            // Gray (fallback)
+        };
+
+        // Function to get non-transparent version of color for map markers
+        function getSolidColor(rgbaColor) {
+            return rgbaColor.replace('0.7', '1.0');
+        }
+
+        // Function to determine crossing color based on type
+        function getCrossingColor(crossing) {
+            // Determine the primary type
+            let primaryType = 'footway'; // Default
+            if (crossing.tags.highway === 'cycleway') {
+                primaryType = 'cycleway';
+            } else if (crossing.tags.highway === 'path') {
+                primaryType = 'path';
+            }
+            
+            // Add marking type info
+            let markingType = 'unknown';
+            if (crossing.tags.crossing) {
+                markingType = crossing.tags.crossing;
+            }
+            
+            // Create a combined label
+            const typeLabel = `${primaryType} (${markingType})`;
+            
+            // If we don't already have a color for this type, assign one from our predefined colors
+            if (!CROSSING_COLORS[typeLabel]) {
+                // For consistent coloring, we'll assign colors in a deterministic way
+                const colorKeys = Object.keys(CROSSING_COLORS);
+                const colorIndex = colorKeys.length % (Object.keys(CROSSING_COLORS).length - 1); // Skip 'default'
+                CROSSING_COLORS[typeLabel] = colorKeys[colorIndex] !== 'default' 
+                    ? CROSSING_COLORS[colorKeys[colorIndex]] 
+                    : CROSSING_COLORS['footway (marked)'];
+            }
+            
+            // Return the color for this type
+            return CROSSING_COLORS[typeLabel];
+        }
+        
+        function updateCrossingStatsList(crossingTypes, crossingColors) {
+            const statsContainer = document.getElementById('crossing-stats');
+            
+            // Keep only the total count paragraph
+            const totalParagraph = statsContainer.querySelector('p');
+            statsContainer.innerHTML = '';
+            statsContainer.appendChild(totalParagraph);
+            
+            // Add a paragraph for each crossing type with matching color
+            Object.keys(crossingTypes).forEach(type => {
+                const count = crossingTypes[type];
+                const color = getSolidColor(crossingColors[type]);
+                
+                const paragraph = document.createElement('p');
+                paragraph.innerHTML = `<span style="color: ${color}; font-weight: bold;">■</span> ${type}: <span style="font-weight: bold;">${count}</span>`;
+                statsContainer.appendChild(paragraph);
+            });
+        }
 
         const pathStyles = {
             footway: { color: '#ff0000', weight: 3 },
             cycleway: { color: '#0000ff', weight: 3 },
             shared: { color: '#8e24aa', weight: 3 }
         };
+        
+        // This function returns the style for a path, allowing customization based on tags
+        function getPathStyle(path) {
+            const baseStyle = {...pathStyles[path.type]};
+            
+            // Special style for sidewalks
+            if (path.type === 'footway' && path.tags && path.tags.footway === 'sidewalk') {
+                return { ...baseStyle, color: '#ff6347' }; // Tomato color for sidewalks
+            }
+            
+            return baseStyle;
+        }
 
-        function initializeChart() {
-            const ctx = document.getElementById('pathTypeChart').getContext('2d');
-            pathTypeChart = new Chart(ctx, {
+        map.on('zoomend', checkZoomLevel);
+
+        function initializeCharts() {
+            // Initialize Path Type Chart
+            const pathCtx = document.getElementById('pathTypeChart').getContext('2d');
+            pathTypeChart = new Chart(pathCtx, {
                 type: 'bar',
                 data: {
                     labels: ['Footways', 'Cycleways', 'Shared Paths'],
+                    datasets: [
+                        {
+                            label: 'Sidewalks',
+                            data: [0, 0, 0],
+                            backgroundColor: 'rgba(255, 99, 71, 0.7)', // tomato for sidewalks
+                            borderColor: 'rgba(255, 99, 71, 1)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Other Footways',
+                            data: [0, 0, 0],
+                            backgroundColor: 'rgba(255, 0, 0, 0.7)', // red for other footways
+                            borderColor: 'rgba(255, 0, 0, 1)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Cycleways',
+                            data: [0, 0, 0],
+                            backgroundColor: 'rgba(0, 0, 255, 0.7)', // blue for cycleways
+                            borderColor: 'rgba(0, 0, 255, 1)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Shared Paths',
+                            data: [0, 0, 0],
+                            backgroundColor: 'rgba(142, 36, 170, 0.7)', // purple for shared paths
+                            borderColor: 'rgba(142, 36, 170, 1)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            title: {
+                                display: true,
+                                text: 'Path Types'
+                            }
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Length (km)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                footer: function(tooltipItems) {
+                                    // Calculate total for footways if hovering over sidewalk or other footway
+                                    const datasetIndex = tooltipItems[0].datasetIndex;
+                                    const dataIndex = tooltipItems[0].dataIndex;
+                                    
+                                    // Only show total for the footways category (index 0)
+                                    if (dataIndex === 0 && (datasetIndex === 0 || datasetIndex === 1)) {
+                                        const sidewalks = pathTypeChart.data.datasets[0].data[0] || 0;
+                                        const otherFootways = pathTypeChart.data.datasets[1].data[0] || 0;
+                                        const total = sidewalks + otherFootways;
+                                        return `Total Footways: ${total.toFixed(2)} km`;
+                                    }
+                                    return '';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Initialize Crossing Type Chart (Doughnut)
+            const crossingCtx = document.getElementById('crossingTypeChart').getContext('2d');
+            crossingTypeChart = new Chart(crossingCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: [],  // Will be populated with crossing types
                     datasets: [{
-                        label: 'Length (km)',
-                        data: [0, 0, 0],
-                        backgroundColor: ['rgba(255, 0, 0, 0.5)', 'rgba(0, 0, 255, 0.5)', 'rgba(142, 36, 170, 0.5)'],
-                        borderColor: ['rgba(255, 0, 0, 1)', 'rgba(0, 0, 255, 1)', 'rgba(142, 36, 170, 1)'],
+                        data: [],  // Will be populated with counts
+                        backgroundColor: [], // Will be populated based on crossing types
                         borderWidth: 1
                     }]
                 },
                 options: {
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: { stepSize: 1 }
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                boxWidth: 12
+                            }
                         },
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Path Types'
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.raw || 0;
+                                    const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                    const percentage = Math.round((value / total) * 100);
+                                    return `${label}: ${value} (${percentage}%)`;
+                                }
                             }
                         }
                     }
@@ -175,7 +507,7 @@
         async function fetchPathData() {
             const bounds = map.getBounds();
             const query = `
-                [out:json][timeout:25];
+                [out:json][timeout:60];
                 (
                     way["highway"="footway"]["footway"!="crossing"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                     way["highway"="cycleway"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
@@ -187,23 +519,62 @@
                 out skel qt;
             `;
 
-            document.getElementById('loading').style.display = 'block';
+            showLoading(true);
             fetchButton.disabled = true;
+            exportButton.disabled = true;
 
             try {
+                updateLoadingStatus('Fetching data from OpenStreetMap...', 10);
+                
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+                
                 const response = await fetch('https://overpass-api.de/api/interpreter', {
                     method: 'POST',
-                    body: query
+                    body: query,
+                    signal: controller.signal
                 });
+                
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                updateLoadingStatus('Parsing response data...', 50);
                 const data = await response.json();
-                return processOSMData(data);
+                
+                updateLoadingStatus('Processing OSM data...', 70);
+                const result = processOSMData(data);
+                
+                updateLoadingStatus('Completed!', 100);
+                currentData = result;
+                return result;
             } catch (error) {
                 console.error('Error fetching path data:', error);
-                return { paths: [], crossings: 0 };
+                updateLoadingStatus(`Error: ${error.message}`, 100);
+                setTimeout(() => showLoading(false), 3000);
+                return { paths: [], crossings: [] };
             } finally {
-                document.getElementById('loading').style.display = 'none';
-                fetchButton.disabled = false;
+                setTimeout(() => {
+                    showLoading(false);
+                    fetchButton.disabled = false;
+                    exportButton.disabled = currentData.paths.length === 0 && currentData.crossings.length === 0;
+                }, 1000);
             }
+        }
+
+        function showLoading(show) {
+            loadingContainer.style.display = show ? 'block' : 'none';
+            if (show) {
+                progressBar.style.width = '0%';
+                loadingStatus.textContent = 'Initializing...';
+            }
+        }
+
+        function updateLoadingStatus(message, progress) {
+            loadingStatus.textContent = message;
+            progressBar.style.width = `${progress}%`;
         }
 
         function calculateCentroid(coordinates) {
@@ -213,7 +584,7 @@
                     (coordinates[0][1] + coordinates[1][1]) / 2
                 ];
             }
-            // Per segmenti più complessi, troviamo il punto centrale
+            // For more complex segments, find the middle point
             const midIndex = Math.floor(coordinates.length / 2);
             return coordinates[midIndex];
         }
@@ -239,7 +610,8 @@
                             id: element.id,
                             coordinates: calculateCentroid(coordinates),
                             name: element.tags.name || '',
-                            length: calculatePathLength(coordinates)
+                            length: calculatePathLength(coordinates),
+                            tags: { ...element.tags } // Create a copy of all tags
                         });
                     } else {
                         let pathType;
@@ -260,7 +632,8 @@
                                 coordinates: coordinates,
                                 name: element.tags.name || '',
                                 surface: element.tags.surface || 'unknown',
-                                length: calculatePathLength(coordinates)
+                                length: calculatePathLength(coordinates),
+                                tags: { ...element.tags } // Create a copy of all tags
                             });
                         }
                     }
@@ -279,75 +652,169 @@
         }
 
         function updatePaths({ paths, crossings }) {
-            // Rimuovi i layer esistenti
+            // Remove existing layers
             pathLayers.forEach(layer => map.removeLayer(layer));
-            crossingLayers.forEach(layer => map.removeLayer(layer));
             pathLayers = [];
+            
+            crossingLayers.forEach(layer => map.removeLayer(layer));
             crossingLayers = [];
 
-            // Aggiungi i percorsi
+            // Add paths
             paths.forEach(path => {
-                const layer = L.polyline(path.coordinates, pathStyles[path.type])
-                    .bindPopup(`
-                        ${path.name ? `<b>${path.name}</b><br>` : ''}
-                        Type: ${path.type}<br>
-                        Length: ${path.length.toFixed(2)} km<br>
-                        Surface: ${path.surface}
-                    `)
+                const layer = L.polyline(path.coordinates, getPathStyle(path))
+                    .bindPopup(createPopupContent(path))
                     .addTo(map);
                 pathLayers.push(layer);
             });
 
-            // Aggiungi gli attraversamenti come punti
+            // Add crossings as markers with colors matching their types in the chart
             crossings.forEach(crossing => {
-                const layer = L.circleMarker(crossing.coordinates, {
+                const color = getCrossingColor(crossing);
+                const solidColor = getSolidColor(color);
+                
+                const marker = L.circleMarker(crossing.coordinates, {
                     radius: 6,
-                    fillColor: '#ff8c00',
+                    fillColor: solidColor,
                     color: '#000',
                     weight: 1,
                     opacity: 1,
                     fillOpacity: 0.8
-                }).bindPopup(`
-                    Crossing<br>
-                    ${crossing.name ? `Name: ${crossing.name}<br>` : ''}
-                    Length: ${crossing.length.toFixed(2)} m
-                `).addTo(map);
-                crossingLayers.push(layer);
+                }).bindPopup(createPopupContent(crossing))
+                  .addTo(map);
+                
+                crossingLayers.push(marker);
             });
         }
 
         function updateDashboard({ paths, crossings }) {
             const stats = {
                 footway: { count: 0, length: 0 },
+                sidewalk: { count: 0, length: 0 },
+                otherFootway: { count: 0, length: 0 },
                 cycleway: { count: 0, length: 0 },
                 shared: { count: 0, length: 0 }
             };
 
+            // For detailed crossing type analysis
+            const crossingTypes = {};
+            const crossingColors = {};
+            
+            // Process path data
             paths.forEach(path => {
-                stats[path.type].count++;
-                stats[path.type].length += path.length;
+                if (path.type === 'footway') {
+                    // Check if this footway is a sidewalk
+                    const isSidewalk = path.tags && path.tags.footway === 'sidewalk';
+                    
+                    if (isSidewalk) {
+                        stats.sidewalk.count++;
+                        stats.sidewalk.length += path.length;
+                    } else {
+                        stats.otherFootway.count++;
+                        stats.otherFootway.length += path.length;
+                    }
+                    
+                    // Also update the total footway stats
+                    stats.footway.count++;
+                    stats.footway.length += path.length;
+                } else {
+                    stats[path.type].count++;
+                    stats[path.type].length += path.length;
+                }
             });
 
+            // Process crossing data
+            crossings.forEach(crossing => {
+                // Analyze crossing types
+                // Determine the primary type (footway, cycleway, path)
+                let primaryType = 'footway'; // Default
+                if (crossing.tags.highway === 'cycleway') {
+                    primaryType = 'cycleway';
+                } else if (crossing.tags.highway === 'path') {
+                    primaryType = 'path';
+                }
+                
+                // Add marking type info
+                let markingType = 'unknown';
+                if (crossing.tags.crossing) {
+                    markingType = crossing.tags.crossing;
+                }
+                
+                // Create a combined label
+                const typeLabel = `${primaryType} (${markingType})`;
+                
+                // Count each type
+                if (!crossingTypes[typeLabel]) {
+                    crossingTypes[typeLabel] = 1;
+                    crossingColors[typeLabel] = getCrossingColor(crossing);
+                } else {
+                    crossingTypes[typeLabel]++;
+                }
+            });
+
+            // Update basic stats
             const totalCount = paths.length;
             const totalLength = paths.reduce((sum, path) => sum + path.length, 0);
 
             document.getElementById('total-count').textContent = totalCount;
             document.getElementById('total-length').textContent = totalLength.toFixed(2);
             document.getElementById('crossing-count').textContent = crossings.length;
+            document.getElementById('crossing-total').textContent = crossings.length;
+            
+            // Update the crossing stats with dynamically generated content
+            updateCrossingStatsList(crossingTypes, crossingColors);
 
+            // For display, combine the sidewalk and other footway counts
             document.getElementById('footway-count').textContent = stats.footway.count;
             document.getElementById('footway-length').textContent = stats.footway.length.toFixed(2);
+            document.getElementById('sidewalk-count').textContent = stats.sidewalk.count;
+            
             document.getElementById('cycleway-count').textContent = stats.cycleway.count;
             document.getElementById('cycleway-length').textContent = stats.cycleway.length.toFixed(2);
             document.getElementById('shared-count').textContent = stats.shared.count;
             document.getElementById('shared-length').textContent = stats.shared.length.toFixed(2);
 
-            pathTypeChart.data.datasets[0].data = [
-                stats.footway.length,
-                stats.cycleway.length,
-                stats.shared.length
-            ];
+            // Update path chart data
+            // Set all datasets to zeros first
+            pathTypeChart.data.datasets[0].data = [0, 0, 0]; // Sidewalks
+            pathTypeChart.data.datasets[1].data = [0, 0, 0]; // Other Footways
+            pathTypeChart.data.datasets[2].data = [0, 0, 0]; // Cycleways
+            pathTypeChart.data.datasets[3].data = [0, 0, 0]; // Shared Paths
+            
+            // Update the data for each category
+            pathTypeChart.data.datasets[0].data[0] = stats.sidewalk.length;      // Sidewalks in the Footways column
+            pathTypeChart.data.datasets[1].data[0] = stats.otherFootway.length;  // Other Footways in the Footways column
+            pathTypeChart.data.datasets[2].data[1] = stats.cycleway.length;      // Cycleways in the Cycleways column
+            pathTypeChart.data.datasets[3].data[2] = stats.shared.length;        // Shared Paths in the Shared Paths column
+            
             pathTypeChart.update();
+            
+            // Update crossing chart with consistent colors
+            // Convert the crossing types object to arrays for the chart
+            const typeLabels = Object.keys(crossingTypes);
+            const typeCounts = typeLabels.map(label => crossingTypes[label]);
+            const backgroundColors = typeLabels.map(label => crossingColors[label]);
+            
+            // Update the doughnut chart
+            crossingTypeChart.data.labels = typeLabels;
+            crossingTypeChart.data.datasets[0].data = typeCounts;
+            crossingTypeChart.data.datasets[0].backgroundColor = backgroundColors;
+            crossingTypeChart.update();
+            
+            // Update crossing legend in the control panel
+            updateCrossingLegend(typeLabels, backgroundColors);
+        }
+        
+        function updateCrossingLegend(typeLabels, backgroundColors) {
+            // Clear current legend items
+            crossingLegendContainer.innerHTML = "";
+            
+            // Add legend items for each crossing type
+            typeLabels.forEach((label, index) => {
+                const solidColor = getSolidColor(backgroundColors[index]);
+                const legendItem = document.createElement('div');
+                legendItem.innerHTML = `<span class="dot" style="background: ${solidColor}"></span>${label}`;
+                crossingLegendContainer.appendChild(legendItem);
+            });
         }
 
         function checkZoomLevel() {
@@ -358,17 +825,175 @@
             zoomWarning.style.display = isZoomValid ? 'none' : 'block';
         }
 
-        function initialize() {
-            initializeChart();
+        function exportToCSV() {
+            if (currentData.paths.length === 0 && currentData.crossings.length === 0) {
+                alert("No data to export. Please fetch data first.");
+                return;
+            }
 
+            // Create header row
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "ID,Type,Name,Length (km),Surface\n";
+
+            // Add path data
+            currentData.paths.forEach(path => {
+                csvContent += `${path.id},${path.type},"${path.name.replace(/"/g, '""')}",${path.length.toFixed(4)},${path.surface}\n`;
+            });
+
+            // Add crossing data
+            currentData.crossings.forEach(crossing => {
+                csvContent += `${crossing.id},crossing,"${crossing.name.replace(/"/g, '""')}",${crossing.length.toFixed(4)},crossing\n`;
+            });
+
+            // Create download link
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "path_data.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function exportToGeoJSON() {
+            if (currentData.paths.length === 0 && currentData.crossings.length === 0) {
+                alert("No data to export. Please fetch data first.");
+                return;
+            }
+
+            const geoJSON = {
+                "type": "FeatureCollection",
+                "features": []
+            };
+
+            // Add path features
+            currentData.paths.forEach(path => {
+                geoJSON.features.push({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": path.coordinates.map(coord => [coord[1], coord[0]])
+                    },
+                    "properties": {
+                        "id": path.id,
+                        "type": path.type,
+                        "name": path.name,
+                        "length": path.length,
+                        "surface": path.surface,
+                        ...path.tags
+                    }
+                });
+            });
+
+            // Add crossing features
+            currentData.crossings.forEach(crossing => {
+                geoJSON.features.push({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [crossing.coordinates[1], crossing.coordinates[0]]
+                    },
+                    "properties": {
+                        "id": crossing.id,
+                        "type": "crossing",
+                        "name": crossing.name,
+                        "length": crossing.length,
+                        ...crossing.tags
+                    }
+                });
+            });
+
+            // Create download link
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(geoJSON));
+            const link = document.createElement("a");
+            link.setAttribute("href", dataStr);
+            link.setAttribute("download", "path_data.geojson");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function createPopupContent(element) {
+            // Start with basic information
+            let content = `<div class="popup-content">`;
+            
+            // Add title if available
+            if (element.name) {
+                content += `<h4>${element.name}</h4>`;
+            }
+            
+            // Add basic info
+            content += `<p><strong>ID:</strong> ${element.id}</p>`;
+            content += `<p><strong>Type:</strong> ${element.type === 'crossing' ? 'Crossing' : element.type}</p>`;
+            content += `<p><strong>Length:</strong> ${element.type === 'crossing' ? 
+                (element.length * 1000).toFixed(2) + ' m' : 
+                element.length.toFixed(2) + ' km'}</p>`;
+            
+            // Add collapsible section for all tags
+            content += `<div class="tag-section">
+                <p><a href="#" onclick="toggleTags('tags-${element.id}'); return false;">
+                    <strong>Show all tags ▼</strong>
+                </a></p>
+                <div id="tags-${element.id}" style="display: none;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <th style="text-align: left; padding: 3px; border-bottom: 1px solid #ddd;">Key</th>
+                            <th style="text-align: left; padding: 3px; border-bottom: 1px solid #ddd;">Value</th>
+                        </tr>`;
+            
+            // Add all tags to the table
+            for (const [key, value] of Object.entries(element.tags)) {
+                content += `<tr>
+                    <td style="padding: 3px; border-bottom: 1px solid #ddd;">${key}</td>
+                    <td style="padding: 3px; border-bottom: 1px solid #ddd;">${value}</td>
+                </tr>`;
+            }
+            
+            content += `</table></div></div></div>`;
+            
+            return content;
+        }
+        
+        // Add a global function to toggle tag visibility
+        window.toggleTags = function(id) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.style.display = element.style.display === 'none' ? 'block' : 'none';
+            }
+        };
+        
+        function initialize() {
+            initializeCharts();
+
+            // Fetch data button
             fetchButton.addEventListener('click', async () => {
                 const data = await fetchPathData();
                 updatePaths(data);
                 updateDashboard(data);
+                exportButton.disabled = data.paths.length === 0 && data.crossings.length === 0;
             });
 
+            // Export buttons
+            exportCSV.addEventListener('click', (e) => {
+                e.preventDefault();
+                exportToCSV();
+            });
+
+            exportGeoJSON.addEventListener('click', (e) => {
+                e.preventDefault();
+                exportToGeoJSON();
+            });
+
+            // Map events
             map.on('zoomend', checkZoomLevel);
             checkZoomLevel();
+
+            // Handle responsive layout adjustments
+            window.addEventListener('resize', function() {
+                if (pathTypeChart) {
+                    pathTypeChart.resize();
+                }
+            });
         }
 
         initialize();
