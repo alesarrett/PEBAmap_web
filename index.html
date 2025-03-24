@@ -294,23 +294,40 @@
         const loadingStatus = document.getElementById('loading-status');
         const crossingLegendContainer = document.getElementById('crossing-legend-container');
 
-        // Define constant colors for crossing types
-        const CROSSING_COLORS = {
-            'footway (marked)': 'rgba(255, 99, 132, 0.7)',    // Red
-            'footway (unmarked)': 'rgba(54, 162, 235, 0.7)',  // Blue
-            'footway (zebra)': 'rgba(255, 206, 86, 0.7)',     // Yellow
-            'footway (uncontrolled)': 'rgba(0, 204, 102, 0.7)',  // Teal
-            'footway (traffic_signals)': 'rgba(255, 105, 180, 0.7)',  // Hot Pink
-            'cycleway (marked)': 'rgba(75, 192, 192, 0.7)',   // Green
-            'cycleway (unmarked)': 'rgba(153, 102, 255, 0.7)', // Purple
-            'path (marked)': 'rgba(255, 159, 64, 0.7)',       // Orange
-            'path (unmarked)': 'rgba(63, 127, 191, 0.7)',     // Blue-ish
-            'default': 'rgba(128, 128, 128, 0.7)'            // Gray (fallback)
+        // Define path styles with primary colors
+        const pathStyles = {
+            footway: { color: '#ff0000', weight: 3 },       // Red for footways
+            cycleway: { color: '#0000ff', weight: 3 },      // Blue for cycleways
+            shared: { color: '#8e24aa', weight: 3 },        // Purple for shared paths
+            sidewalk: { color: '#ff6347', weight: 3 }       // Tomato for sidewalks (special footway)
+        };
+
+        // Define crossing colors that match path colors (with transparency)
+        const PATH_BASE_COLORS = {
+            'footway': 'rgba(255, 0, 0, 0.7)',      // Red for footway crossings
+            'cycleway': 'rgba(0, 0, 255, 0.7)',     // Blue for cycleway crossings
+            'path': 'rgba(142, 36, 170, 0.7)',      // Purple for shared path crossings
+            'sidewalk': 'rgba(255, 99, 71, 0.7)'    // Tomato for sidewalk (not used directly for crossings)
+        };
+
+        // Variant colors for different crossing types
+        const CROSSING_VARIANTS = {
+            'marked': 1.0,              // Fully opaque
+            'unmarked': 0.7,            // Slightly transparent
+            'zebra': 0.85,              // Between marked and unmarked
+            'traffic_signals': 0.9,     // Nearly fully opaque
+            'uncontrolled': 0.6,        // More transparent
+            'unknown': 0.5              // Most transparent
         };
 
         // Function to get non-transparent version of color for map markers
         function getSolidColor(rgbaColor) {
-            return rgbaColor.replace('0.7', '1.0');
+            return rgbaColor.replace(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)/, 'rgb($1, $2, $3)');
+        }
+
+        // Helper function to adjust color opacity
+        function adjustOpacity(rgbaColor, opacity) {
+            return rgbaColor.replace(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)/, `rgba($1, $2, $3, ${opacity})`);
         }
 
         // Function to determine crossing color based on type
@@ -323,27 +340,25 @@
                 primaryType = 'path';
             }
             
-            // Add marking type info
+            // Get base color for this type of path
+            const baseColor = PATH_BASE_COLORS[primaryType];
+            
+            // Add marking type info and adjust opacity based on marking type
             let markingType = 'unknown';
             if (crossing.tags.crossing) {
                 markingType = crossing.tags.crossing;
             }
             
+            // Adjust opacity based on marking type (if we know this variant)
+            let adjustedColor = baseColor;
+            if (CROSSING_VARIANTS[markingType]) {
+                adjustedColor = adjustOpacity(baseColor, CROSSING_VARIANTS[markingType]);
+            }
+            
             // Create a combined label
             const typeLabel = `${primaryType} (${markingType})`;
             
-            // If we don't already have a color for this type, assign one from our predefined colors
-            if (!CROSSING_COLORS[typeLabel]) {
-                // For consistent coloring, we'll assign colors in a deterministic way
-                const colorKeys = Object.keys(CROSSING_COLORS);
-                const colorIndex = colorKeys.length % (Object.keys(CROSSING_COLORS).length - 1); // Skip 'default'
-                CROSSING_COLORS[typeLabel] = colorKeys[colorIndex] !== 'default' 
-                    ? CROSSING_COLORS[colorKeys[colorIndex]] 
-                    : CROSSING_COLORS['footway (marked)'];
-            }
-            
-            // Return the color for this type
-            return CROSSING_COLORS[typeLabel];
+            return { color: adjustedColor, label: typeLabel };
         }
         
         function updateCrossingStatsList(crossingTypes, crossingColors) {
@@ -364,23 +379,15 @@
                 statsContainer.appendChild(paragraph);
             });
         }
-
-        const pathStyles = {
-            footway: { color: '#ff0000', weight: 3 },
-            cycleway: { color: '#0000ff', weight: 3 },
-            shared: { color: '#8e24aa', weight: 3 }
-        };
         
         // This function returns the style for a path, allowing customization based on tags
         function getPathStyle(path) {
-            const baseStyle = {...pathStyles[path.type]};
-            
             // Special style for sidewalks
             if (path.type === 'footway' && path.tags && path.tags.footway === 'sidewalk') {
-                return { ...baseStyle, color: '#ff6347' }; // Tomato color for sidewalks
+                return pathStyles.sidewalk;
             }
             
-            return baseStyle;
+            return pathStyles[path.type];
         }
 
         map.on('zoomend', checkZoomLevel);
@@ -513,6 +520,8 @@
                     way["highway"="cycleway"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                     way["highway"="path"]["foot"="designated"]["bicycle"="designated"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                     way["highway"="footway"]["footway"="crossing"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"="path"]["path"="crossing"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
+                    way["highway"="cycleway"]["cycleway"="crossing"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
                 );
                 out body;
                 >;
@@ -605,7 +614,10 @@
                     const coordinates = element.nodes.map(nodeId => nodes[nodeId]).filter(coord => coord);
                     if (coordinates.length < 2) return;
 
-                    if (element.tags.highway === 'footway' && element.tags.footway === 'crossing') {
+                    // Check for crossings (now includes all three types)
+                    if ((element.tags.highway === 'footway' && element.tags.footway === 'crossing') || 
+                        (element.tags.highway === 'path' && element.tags.path === 'crossing') ||
+                        (element.tags.highway === 'cycleway' && element.tags.cycleway === 'crossing')) {
                         crossings.push({
                             id: element.id,
                             coordinates: calculateCentroid(coordinates),
@@ -669,8 +681,8 @@
 
             // Add crossings as markers with colors matching their types in the chart
             crossings.forEach(crossing => {
-                const color = getCrossingColor(crossing);
-                const solidColor = getSolidColor(color);
+                const colorInfo = getCrossingColor(crossing);
+                const solidColor = getSolidColor(colorInfo.color);
                 
                 const marker = L.circleMarker(crossing.coordinates, {
                     radius: 6,
@@ -724,30 +736,15 @@
 
             // Process crossing data
             crossings.forEach(crossing => {
-                // Analyze crossing types
-                // Determine the primary type (footway, cycleway, path)
-                let primaryType = 'footway'; // Default
-                if (crossing.tags.highway === 'cycleway') {
-                    primaryType = 'cycleway';
-                } else if (crossing.tags.highway === 'path') {
-                    primaryType = 'path';
-                }
-                
-                // Add marking type info
-                let markingType = 'unknown';
-                if (crossing.tags.crossing) {
-                    markingType = crossing.tags.crossing;
-                }
-                
-                // Create a combined label
-                const typeLabel = `${primaryType} (${markingType})`;
+                // Get color info for this crossing
+                const colorInfo = getCrossingColor(crossing);
                 
                 // Count each type
-                if (!crossingTypes[typeLabel]) {
-                    crossingTypes[typeLabel] = 1;
-                    crossingColors[typeLabel] = getCrossingColor(crossing);
+                if (!crossingTypes[colorInfo.label]) {
+                    crossingTypes[colorInfo.label] = 1;
+                    crossingColors[colorInfo.label] = colorInfo.color;
                 } else {
-                    crossingTypes[typeLabel]++;
+                    crossingTypes[colorInfo.label]++;
                 }
             });
 
@@ -788,18 +785,44 @@
             
             pathTypeChart.update();
             
+
             // Update crossing chart with consistent colors
-            // Convert the crossing types object to arrays for the chart
-            const typeLabels = Object.keys(crossingTypes);
-            const typeCounts = typeLabels.map(label => crossingTypes[label]);
-            const backgroundColors = typeLabels.map(label => crossingColors[label]);
-            
+            // Prepare data arrays for the chart
+            const crossingData = [];
+
+            // Convert to array of objects for sorting
+            Object.keys(crossingTypes).forEach(label => {
+                crossingData.push({
+                    label: label,
+                    count: crossingTypes[label],
+                    color: crossingColors[label]
+                });
+            });
+
+            // Sort by primary type (footway, cycleway, path) to group them together
+            crossingData.sort((a, b) => {
+                // Extract primary type from the label (format is "primaryType (markingType)")
+                const typeA = a.label.split(' ')[0];
+                const typeB = b.label.split(' ')[0];
+
+                // Define order: footway first, then cycleway, then path
+                const typeOrder = { 'footway': 1, 'cycleway': 2, 'path': 3 };
+
+                // Compare based on defined order
+                return typeOrder[typeA] - typeOrder[typeB];
+            });
+
+            // Convert back to separate arrays
+            const typeLabels = crossingData.map(item => item.label);
+            const typeCounts = crossingData.map(item => item.count);
+            const backgroundColors = crossingData.map(item => item.color);
+
             // Update the doughnut chart
             crossingTypeChart.data.labels = typeLabels;
             crossingTypeChart.data.datasets[0].data = typeCounts;
             crossingTypeChart.data.datasets[0].backgroundColor = backgroundColors;
             crossingTypeChart.update();
-            
+
             // Update crossing legend in the control panel
             updateCrossingLegend(typeLabels, backgroundColors);
         }
