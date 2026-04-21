@@ -128,9 +128,9 @@
      fai clic destro e scegli "Mostra indirizzo" oppure
      leggi lat/lon dall'URL dopo il simbolo #map=zoom/lat/lon
 ═══════════════════════════════════════════════════════════════ */
-const START_LAT  =  44.2857;   // Faenza (RA)
-const START_LNG  =  11.8880;
-const START_ZOOM =  13;
+const START_LAT  =  44.2866;   // Faenza (RA)
+const START_LNG  =  11.8826;
+const START_ZOOM =  14;
 
 const MIN_ZOOM = 15;
 const OVERPASS_MIRRORS = [
@@ -344,20 +344,29 @@ function hoverTip(label, acc) {
   return `<div class="osm-tip"><b>${label}</b><br><span style="color:${color};font-weight:600;">${acc||"non classificata"}</span><br><span style="color:#aaa;font-size:10px;">clicca per i dettagli</span></div>`;
 }
 
-function tagsTable(tags, osmType, osmId) {
+function formatTimestamp(ts) {
+  if (!ts) return null;
+  return new Date(ts).toLocaleDateString("it-IT", {day:"numeric", month:"long", year:"numeric"});
+}
+
+function tagsTable(tags, osmType, osmId, timestamp) {
   const rows = Object.entries(tags)
     .filter(([k]) => !SKIP_TAGS.has(k))
     .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)
     .join("");
   const url = `https://www.openstreetmap.org/${osmType}/${osmId}`;
-  return `<table>${rows}</table><a href="${url}" target="_blank" rel="noopener">Apri su OpenStreetMap ↗</a>`;
+  const dateStr = formatTimestamp(timestamp);
+  const dateLine = dateStr
+    ? `<div style="font-size:10px;color:#aaa;margin-top:4px;">Ultima modifica OSM: ${dateStr}</div>`
+    : "";
+  return `<table>${rows}</table><a href="${url}" target="_blank" rel="noopener">Apri su OpenStreetMap ↗</a>${dateLine}`;
 }
 
-function popupContent(label, acc, tags, osmType, osmId) {
+function popupContent(label, acc, tags, osmType, osmId, timestamp) {
   const color = {"not accessible":"#e74c3c","limited accessibility":"#f39c12","good accessibility":"#27ae60"}[acc]||"#888";
   return `<div class="osm-popup"><b>${label}</b><br>
     <span style="color:${color};font-weight:600;font-size:12px;">${acc||"non classificata"}</span>
-    ${tagsTable(tags, osmType, osmId)}</div>`;
+    ${tagsTable(tags, osmType, osmId, timestamp)}</div>`;
 }
 
 /* ── Icone punti ── */
@@ -387,7 +396,7 @@ function buildQuery(b) {
   node["obstacle:wheelchair"];
   node["maxwidth:physical"];
 );
-out body; >; out skel qt;`;
+out meta; >; out skel qt;`;
 }
 
 function setProgress(pct, txt) {
@@ -416,7 +425,7 @@ async function analyze() {
 
     const nodes = {};
     data.elements.filter(e => e.type==="node").forEach(n => {
-      nodes[n.id] = { lat: n.lat, lon: n.lon, tags: n.tags||{} };
+      nodes[n.id] = { lat: n.lat, lon: n.lon, tags: n.tags||{}, timestamp: n.timestamp||null };
     });
 
     setProgress(65, "Classifico l'accessibilità...");
@@ -441,7 +450,7 @@ async function analyze() {
         dashArray: isCrossing ? "8,6" : undefined
       });
       pl.bindTooltip(hoverTip(label, acc), { sticky: true });
-      pl.bindPopup(popupContent(label, acc, t, "way", way.id), { maxWidth: 320 });
+      pl.bindPopup(popupContent(label, acc, t, "way", way.id, way.timestamp), { maxWidth: 320 });
       pl.on("click", () => selectFeature(pl, true));
       pl.addTo(lg);
       allFeatures.push(pl);
@@ -459,7 +468,7 @@ async function analyze() {
         const icon   = isKerb ? kerbIcon(color) : obstacleIcon(color);
         const mk = L.marker([n.lat, n.lon], { icon });
         mk.bindTooltip(hoverTip(label, acc), { sticky: true });
-        mk.bindPopup(popupContent(label, acc, t, "node", n.id), { maxWidth: 320 });
+        mk.bindPopup(popupContent(label, acc, t, "node", n.id, nodes[n.id]?.timestamp||n.timestamp), { maxWidth: 320 });
         mk.on("click", () => selectFeature(mk, false));
         mk.addTo(lg);
         allFeatures.push(mk);
