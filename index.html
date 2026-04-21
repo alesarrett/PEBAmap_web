@@ -447,12 +447,17 @@ async function analyze() {
         : "Marciapiede/percorso";
       const pl = L.polyline(coords, {
         color, weight: 4, opacity: 0.85,
-        dashArray: isCrossing ? "8,6" : undefined
+        dashArray: isCrossing ? "8,6" : undefined,
+        interactive: false
       });
-      pl.bindTooltip(hoverTip(label, acc), { sticky: true });
-      pl.bindPopup(popupContent(label, acc, t, "way", way.id, way.timestamp), { maxWidth: 320 });
-      pl.on("click", () => selectFeature(pl, true));
+      const hit = L.polyline(coords, {
+        weight: 14, opacity: 0, color: "#000"
+      });
+      hit.bindTooltip(hoverTip(label, acc), { sticky: true });
+      hit.bindPopup(popupContent(label, acc, t, "way", way.id, way.timestamp), { maxWidth: 320 });
+      hit.on("click", () => selectFeature(pl, true));
       pl.addTo(lg);
+      hit.addTo(lg);
       allFeatures.push(pl);
     });
 
